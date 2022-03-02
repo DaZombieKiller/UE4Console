@@ -2,5 +2,5 @@
 
 class UObject
 {
-	char RawData[0x28];
+    char RawData[0x28];
 };
