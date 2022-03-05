@@ -5,6 +5,7 @@
 #include <Psapi.h>
 #include <detours.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 #include "UConsole.h"
 #include "UGameViewportClient.h"
@@ -18,6 +19,8 @@ DWORD(WINAPI *EntryPoint)(LPVOID);
 UObject*(*StaticConstructObject_Internal)(FStaticConstructObjectParameters*);
 
 FOutputDeviceRedirector*(*GetGlobalLogSingleton)(void);
+
+void*(*AddConsoleObject)(void*, wchar_t const*, void*);
 
 ULocalPlayer* SetupInitialLocalPlayerDetour(UGameViewportClient* Self, FString* OutError)
 {
@@ -34,8 +37,17 @@ ULocalPlayer* SetupInitialLocalPlayerDetour(UGameViewportClient* Self, FString* 
     return UGameViewportClient::SetupInitialLocalPlayer(Self, OutError);
 }
 
+void* AddConsoleObjectDetour(void* Self, wchar_t const* Name, void* Obj)
+{
+    printf("%ls\n", Name);
+    return AddConsoleObject(Self, Name, Obj);
+}
+
 DWORD WINAPI EntryPointDetour(LPVOID lpParam)
 {
+#if UE4CONSOLE_LOG_FILE
+    (void)freopen("stdout.txt", "w", stdout);
+#endif
     HANDLE hProcess = GetCurrentProcess();
     HMODULE hModule = GetModuleHandleW(nullptr);
 
@@ -91,11 +103,16 @@ DWORD WINAPI EntryPointDetour(LPVOID lpParam)
     *(LPVOID*)&UConsole::GetPrivateStaticClass = (LPVOID)Symbol.Address;
 
 #if 0
-    SymFromNameW(hProcess, L"?GetGlobalLogSingleton@@YAPEAVFOutputDeviceRedirector@@XZ", &symbol);
-    *(LPVOID*)&GetGlobalLogSingleton = (LPVOID)symbol.Address;
+    SymFromNameW(hProcess, L"?GetGlobalLogSingleton@@YAPEAVFOutputDeviceRedirector@@XZ", &Symbol);
+    *(LPVOID*)&GetGlobalLogSingleton = (LPVOID)Symbol.Address;
 
-    SymFromNameW(hProcess, L"?AddOutputDevice@FOutputDeviceRedirector@@QEAAXPEAVFOutputDevice@@@Z", &symbol);
-    *(LPVOID*)&FOutputDeviceRedirector::AddOutputDevice = (LPVOID)symbol.Address;
+    SymFromNameW(hProcess, L"?AddOutputDevice@FOutputDeviceRedirector@@QEAAXPEAVFOutputDevice@@@Z", &Symbol);
+    *(LPVOID*)&FOutputDeviceRedirector::AddOutputDevice = (LPVOID)Symbol.Address;
+#endif
+
+#if UE4CONSOLE_LOG_COMMANDS
+    SymFromNameW(hProcess, L"?AddConsoleObject@FConsoleManager@@AEAAPEAVIConsoleObject@@PEB_WPEAV2@@Z", &Symbol);
+    *(LPVOID*)&AddConsoleObject = (LPVOID)Symbol.Address;
 #endif
 
     SymFromNameW(hProcess, L"?SetupInitialLocalPlayer@UGameViewportClient@@UEAAPEAVULocalPlayer@@AEAVFString@@@Z", &Symbol);
@@ -103,6 +120,9 @@ DWORD WINAPI EntryPointDetour(LPVOID lpParam)
 
     // And now we can apply our detour.
     DetourTransactionBegin();
+#if UE4CONSOLE_LOG_COMMANDS
+    DetourAttach((LPVOID*)&AddConsoleObject, &AddConsoleObjectDetour);
+#endif
     DetourAttach((LPVOID*)&UGameViewportClient::SetupInitialLocalPlayer, &SetupInitialLocalPlayerDetour);
     DetourTransactionCommit();
 
